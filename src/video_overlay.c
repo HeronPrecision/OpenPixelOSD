@@ -68,13 +68,11 @@ EXEC_RAM static void init_buffers()
 
 static void show_version(void)
 {
-    extern const char *g_reset_cause; // set once at boot in main.c from RCC_CSR
     char str[COLUMN_SIZE];
+
+    canvas_char_write(8, 9, "Heron Precision", strlen("Heron Precision"));
+    canvas_char_write(8, 10, "DEV: Chickadee", strlen("DEV: Chickadee"));
     sprintf(str, "FW: %s", FW_VERSION);
-    canvas_char_write(8, 9, str, strlen(str));
-    sprintf(str, "MCU: %s", MCU_TYPE);
-    canvas_char_write(8, 10, str, strlen(str));
-    sprintf(str, "RST: %s", g_reset_cause);
     canvas_char_write(8, 11, str, strlen(str));
     canvas_char_draw_complete();
 }

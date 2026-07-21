@@ -33,9 +33,11 @@ EXEC_RAM void canvas_char_write(uint8_t x, uint8_t y, const char *data, const ui
     if (y >= ROW_SIZE) y = 0;
     if (x >= COLUMN_SIZE) x = 0;
 
-    for (uint16_t i = 0; i < len; i++) {
-        const uint8_t col = (x + i) % COLUMN_SIZE;
-        canvas_char_map[active_buffer][y][col] = data[i];
+    // Clamp to the row edge: a string longer than the remaining columns is
+    // truncated rather than wrapped back over the start of the same row
+    // (wrapping produced overlapping, garbage-looking glyphs).
+    for (uint16_t i = 0; i < len && (x + i) < COLUMN_SIZE; i++) {
+        canvas_char_map[active_buffer][y][x + i] = data[i];
     }
 }
 
