@@ -10,7 +10,6 @@
 #include "rf_pa.h"
 #include "rtc6705.h"
 #include "uart.h"
-#include "usb.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -96,9 +95,7 @@ const vtx_config_t* vtx_get_config(void)
 
 static inline void msp_tx_send(uint8_t owner, const uint8_t *buf, uint16_t len)
 {
-    if (owner == MSP_OWNER_USB) {
-        usb_uart_write_bytes((const char*)buf, len);
-    } else if (owner == MSP_OWNER_UART) {
+    if (owner == MSP_OWNER_UART) {
         uart1_tx_dma((uint8_t*)buf, len);
     }
 }
@@ -252,9 +249,7 @@ static void handle_msp_set_vtx_config(uint8_t owner, const uint8_t *payload, uin
 /* Small sender wrapper */
 static inline void msp_tx_send_owner(uint8_t owner, const uint8_t *buf, uint16_t len)
 {
-    if (owner == MSP_OWNER_USB) {
-        usb_uart_write_bytes((const char*)buf, len);
-    } else if (owner == MSP_OWNER_UART) {
+    if (owner == MSP_OWNER_UART) {
         uart1_tx_dma((uint8_t*)buf, len);
     }
 }

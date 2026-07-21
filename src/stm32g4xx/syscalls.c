@@ -29,7 +29,6 @@
 #include <sys/time.h>
 #include <sys/times.h>
 #include <time.h>
-#include <usb.h>
 
 /* Variables */
 extern int __io_putchar(int ch) __attribute__((weak));
@@ -80,14 +79,8 @@ __attribute__((weak)) int _read(int file, char *ptr, int len)
 __attribute__((weak)) int _write(int file, char *ptr, int len)
 {
   (void)file;
-  // int DataIdx;
-
-  usb_uart_write_bytes(ptr, len);
-
-  // for (DataIdx = 0; DataIdx < len; DataIdx++)
-  // {
-  //   __io_putchar(*ptr++);
-  // }
+  (void)ptr;
+  // USB CDC console removed on this hardware; printf output is discarded.
   return len;
 }
 

@@ -39,9 +39,16 @@ void OPAMP1_Init(void)
     LL_GPIO_Init(OPAMP1_VINPIO2_VIDEO_IN_GPIO_Port, &GPIO_InitStruct);
 
     OPAMP_InitStruct.PowerMode = LL_OPAMP_POWERMODE_HIGHSPEED;
-    OPAMP_InitStruct.FunctionalMode = LL_OPAMP_MODE_FOLLOWER;
+    // Non-inverting PGA gain x2 (6 dB) to compensate the 75R output back-termination (R7)
+    // feeding the 75R load: that series+load divider halves the signal, so x2 restores unity
+    // at the load. A plain follower (x1) yields a ~half-amplitude (dark) output.
+    // NOTE: the video engine re-selects the mux input every pixel by writing raw OPAMP1->CSR
+    // values via DMA, so the same gain is also encoded in the OPAMP_CONST_* defines in
+    // video_overlay.c - keep the two in sync.
+    OPAMP_InitStruct.FunctionalMode = LL_OPAMP_MODE_PGA;
     OPAMP_InitStruct.InputNonInverting = LL_OPAMP_INPUT_NONINVERT_IO2;
     LL_OPAMP_Init(OPAMP1, &OPAMP_InitStruct);
+    LL_OPAMP_SetPGAGain(OPAMP1, LL_OPAMP_PGA_GAIN_2_OR_MINUS_1);
     LL_OPAMP_SetInputsMuxMode(OPAMP1, LL_OPAMP_INPUT_MUX_DISABLE);
     LL_OPAMP_SetInternalOutput(OPAMP1, LL_OPAMP_INTERNAL_OUPUT_DISABLED);
     LL_OPAMP_SetTrimmingMode(OPAMP1, LL_OPAMP_TRIMMING_FACTORY);

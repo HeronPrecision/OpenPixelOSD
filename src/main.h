@@ -140,7 +140,10 @@ typedef enum {
 #define DAC8BIT_TO_MV(value)      (((uint32_t)(value) * 3300) / 255)
 #define DAC8BIT_FROM_MV(mV)       (((uint32_t)(mV) * 255) / 3300)
 
-#define VIDE_DETECTION_MV       (DAC12BIT_TO_MV(250)) // 250 mV for video detection
+// All analog-video tuning (sync threshold, hysteresis, OSD pixel levels - all in mV) lives in
+// one place: edit src/video_config.h to retune for a different camera / analog front end.
+#include "video_config.h"
+#define VIDE_DETECTION_MV       DAC12BIT_FROM_MV(VIDEO_SYNC_THRESHOLD_MV) // mV -> DAC1_CH1 code
 
 void gpio_init(void);
 void adc_init(void);

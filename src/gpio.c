@@ -62,11 +62,4 @@ void gpio_init(void)
     GPIO_InitStruct.Mode = LL_GPIO_MODE_INPUT;
     GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
     LL_GPIO_Init(BOOT_KEY_GPIO_Port, &GPIO_InitStruct);
-
-    /* Pull down PA12 to create USB disconnect pulse */
-    LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_12);
-    LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_11);
-    LL_mDelay(200);
-    LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_12);
-    LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_11);
 }

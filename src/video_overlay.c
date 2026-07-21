@@ -18,11 +18,14 @@
 
 #define TIM2_TICK_MS        (1e6f / 170000000)
 
-// OPAMP1 multiplexer constants
-#define OPAMP_CONST_IO0     0x108000E1U  // Positive Input IO0 (e.g., PA1) -
-#define OPAMP_CONST_IO1     0x108000E5U  // Positive Input IO1 (e.g., PA3) - video generator input
-#define OPAMP_CONST_IO2     0x108000E9U  // Positive Input IO2 (e.g., PA7) - video input form camera
-#define OPAMP_CONST_DAC     0x108000EDU  // Positive Input DAC1_OUT1 (internal DAC)
+// OPAMP1 multiplexer constants: raw OPAMP1_CSR values written on-the-fly by DMA to switch the
+// mux input per pixel. Mode = non-inverting PGA gain x2 (VMSEL=PGA, PGGAIN=0) to compensate the
+// 75R output back-termination (R7) into the 75R load; a unity follower (0x108000E_) would halve
+// the output. Keep the gain in sync with OPAMP1_Init() in opamp.c.
+#define OPAMP_CONST_IO0     0x108000C1U  // Positive Input IO0 (e.g., PA1)
+#define OPAMP_CONST_IO1     0x108000C5U  // Positive Input IO1 (e.g., PA3) - video generator input
+#define OPAMP_CONST_IO2     0x108000C9U  // Positive Input IO2 (e.g., PA7) - video input from camera
+#define OPAMP_CONST_DAC     0x108000CDU  // Positive Input DAC (internal DAC3_CH1) - pixel brightness
 
 #define PEXELS_PER_LINE     (360)
 #define BACK_PORCH_LEN      (26) // + DMA started with delay ~2.5us
@@ -30,9 +33,9 @@
 #define OFFSET_X            (BACK_PORCH_LEN)
 #define LINE_BUF_SZ         (BACK_PORCH_LEN + OFFSET_X + PEXELS_PER_LINE+1)
 
-#define DAC_BLACK           DAC12BIT_FROM_MV(450)
-#define DAC_WHITE           DAC12BIT_FROM_MV(900)
-#define DAC_GRAY            DAC12BIT_FROM_MV(650)
+#define DAC_BLACK           DAC12BIT_FROM_MV(VIDEO_DAC_BLACK_MV)
+#define DAC_WHITE           DAC12BIT_FROM_MV(VIDEO_DAC_WHITE_MV)
+#define DAC_GRAY            DAC12BIT_FROM_MV(VIDEO_DAC_GRAY_MV)
 #define MAX_RENDER_LINE     (305) // for PAL
 
 #define LOGO_OFFSET_X       (120)
@@ -65,16 +68,39 @@ EXEC_RAM static void init_buffers()
 
 static void show_version(void)
 {
+    extern const char *g_reset_cause; // set once at boot in main.c from RCC_CSR
     char str[COLUMN_SIZE];
     sprintf(str, "FW: %s", FW_VERSION);
     canvas_char_write(8, 9, str, strlen(str));
     sprintf(str, "MCU: %s", MCU_TYPE);
     canvas_char_write(8, 10, str, strlen(str));
+    sprintf(str, "RST: %s", g_reset_cause);
+    canvas_char_write(8, 11, str, strlen(str));
     canvas_char_draw_complete();
 }
 
 void video_overlay_init(void)
 {
+#ifdef VIDEO_PASSTHROUGH_TEST
+    /* DIAGNOSTIC: static camera passthrough, PA7 (camera in) -> OPAMP1 -> PA2 (video out).
+     * All sync detection, the internal video generator and the OSD overlay are skipped, so the
+     * ONLY thing exercised is the analog path PA7 -> OPAMP1 -> PA2.
+     *
+     * OPAMP1 defaults to non-inverting PGA gain x2 to compensate the 75R output back-termination
+     * (R7) feeding the downstream 75R load: that series+load divider halves the signal, so a x2
+     * buffer restores unity at the load. Build with -DVIDEO_PASSTHROUGH_UNITY for a raw x1
+     * follower instead (~half-amplitude / darker output) to compare the two.
+     */
+    OPAMP1_Init(); // configures PA7 (in) / PA2 (out) analog pins; defaults to PGA gain x2
+#ifdef VIDEO_PASSTHROUGH_UNITY
+    LL_OPAMP_SetFunctionalMode(OPAMP1, LL_OPAMP_MODE_FOLLOWER); // x1: raw, ~half amplitude
+#else
+    LL_OPAMP_SetFunctionalMode(OPAMP1, LL_OPAMP_MODE_PGA);
+    LL_OPAMP_SetPGAGain(OPAMP1, LL_OPAMP_PGA_GAIN_2_OR_MINUS_1); // x2
+#endif
+    LL_OPAMP_Enable(OPAMP1);
+    return;
+#endif
     init_buffers();
     canvas_char_flush_map();
 
@@ -114,8 +140,14 @@ void video_overlay_init(void)
     LL_DAC_ConvertData12RightAligned(DAC3, LL_DAC_CHANNEL_1, DAC_BLACK);
     LL_DAC_TrigSWConversion(DAC3, LL_DAC_CHANNEL_1);
 
+#ifndef VIDEO_CAMERA_ONLY
+    // TIM4 is the "no camera sync" watchdog that starts the internal video generator.
+    // -DVIDEO_CAMERA_ONLY disables it (and thus the generator fallback), so the OSD relies
+    // purely on COMP3 camera-sync detection. Diagnostic: isolates the sync-detect path from
+    // the camera/generator arbitration that otherwise flip-flops when detection is marginal.
     LL_TIM_EnableIT_UPDATE(TIM4);
     LL_TIM_EnableCounter(TIM4);
+#endif
 
     show_version();
 }
@@ -368,18 +400,20 @@ EXEC_RAM void TIM2_IRQHandler(void)
     }
 }
 
-// Called form COMP4 & TIM3 event (video gen)
+// Called from COMP4 & TIM3 event (internal video generator sync).
+// IMPORTANT: COMP4 must NEVER start the generator - only the TIM4 watchdog (sustained camera
+// absence) starts it. Previously this handler restarted the generator whenever it fired with
+// the generator stopped; combined with TIM2 stopping the generator on camera sync, that made
+// the source flip-flop between camera and generator whenever a camera was present (the
+// oscillation seen on the FC1). Here we only render while the generator is already running;
+// with it stopped this is a no-op, so a returning camera cleanly and permanently wins.
 EXEC_RAM void TIM3_IRQHandler(void)
 {
     if (LL_TIM_IsActiveFlag_CC1(TIM3)) {
-        TIM4->CNT = 0;
-        video_source = OPAMP_CONST_IO1;
-        OPAMP1->CSR = video_source;
-        if (video_gen_enabled == false) {
-            video_gen_start();
-            LL_TIM_DisableCounter(TIM1);
-            LL_TIM_SetETRSource(TIM1, LL_TIM_TIM1_ETRSOURCE_COMP4);
-        } else {
+        if (video_gen_enabled == true) {
+            TIM4->CNT = 0;
+            video_source = OPAMP_CONST_IO1;
+            OPAMP1->CSR = video_source;
             pars_video_signal(TIM3->CCR1);
         }
         LL_TIM_ClearFlag_CC1(TIM3);

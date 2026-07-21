@@ -80,7 +80,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Set the project name
-set(CMAKE_PROJECT_NAME OpenPixelOSD LANGUAGES C ASM)
+set(CMAKE_PROJECT_NAME OpenPixelOSD)
 
 # Include toolchain file
 include("cmake/gcc-arm-none-eabi.cmake")
@@ -88,7 +88,7 @@ include("cmake/gcc-arm-none-eabi.cmake")
 # Enable compile command to ease indexing with e.g. clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
-project(${CMAKE_PROJECT_NAME})
+project(${CMAKE_PROJECT_NAME} LANGUAGES C ASM)
 message(STATUS "Build type: " ${CMAKE_BUILD_TYPE})
 
 add_executable(${CMAKE_PROJECT_NAME})
@@ -127,6 +127,47 @@ if(BUILD_VARIANT STREQUAL "VTX")
             ./src/vtx_msp.c)
 endif()
 
+# Diagnostic build: force a static camera passthrough (OPAMP1 follows PA7 -> PA2).
+# No sync detection, no video generator, no OSD overlay. Used to isolate the analog
+# video-input path from the sync-detection logic. Enable with -DVIDEO_PASSTHROUGH_TEST=ON.
+option(VIDEO_PASSTHROUGH_TEST "Diagnostic: static camera passthrough only (no sync/overlay)" OFF)
+if(VIDEO_PASSTHROUGH_TEST)
+    message(STATUS "DIAGNOSTIC build: VIDEO_PASSTHROUGH_TEST enabled (camera -> OPAMP1 -> output, no OSD)")
+    add_compile_definitions(VIDEO_PASSTHROUGH_TEST)
+endif()
+
+# Diagnostic: disable the internal video generator + its watchdog, so the OSD runs the full
+# overlay machinery but locks purely on COMP3 camera sync (no camera<->generator flip-flop).
+option(VIDEO_CAMERA_ONLY "Diagnostic: camera-sync only, no video generator fallback" OFF)
+if(VIDEO_CAMERA_ONLY)
+    message(STATUS "DIAGNOSTIC build: VIDEO_CAMERA_ONLY enabled (no generator fallback)")
+    add_compile_definitions(VIDEO_CAMERA_ONLY)
+endif()
+
+# COMP3/COMP4 video-sync detection threshold (mV). Empty = firmware default (162 mV).
+# Sweep per-camera to fix intermittent sync lock, e.g. -DVIDEO_SYNC_THRESHOLD_MV=200
+set(VIDEO_SYNC_THRESHOLD_MV "" CACHE STRING "Video sync detection threshold in mV")
+if(VIDEO_SYNC_THRESHOLD_MV)
+    message(STATUS "Video sync threshold: ${VIDEO_SYNC_THRESHOLD_MV} mV")
+    add_compile_definitions(VIDEO_SYNC_THRESHOLD_MV=${VIDEO_SYNC_THRESHOLD_MV})
+endif()
+
+# COMP3/COMP4 input hysteresis: NONE / LOW / MEDIUM / HIGH (10/40/70 mV). Empty = firmware default (LOW).
+set(VIDEO_SYNC_HYSTERESIS "" CACHE STRING "COMP hysteresis: NONE/LOW/MEDIUM/HIGH")
+if(VIDEO_SYNC_HYSTERESIS)
+    message(STATUS "COMP sync hysteresis: ${VIDEO_SYNC_HYSTERESIS}")
+    add_compile_definitions(VIDEO_SYNC_HYSTERESIS=LL_COMP_HYSTERESIS_${VIDEO_SYNC_HYSTERESIS})
+endif()
+
+# OSD pixel output levels in mV (see src/video_config.h). Empty = firmware default.
+foreach(_osd_lvl VIDEO_DAC_BLACK_MV VIDEO_DAC_GRAY_MV VIDEO_DAC_WHITE_MV)
+    set(${_osd_lvl} "" CACHE STRING "OSD pixel level ${_osd_lvl} in mV")
+    if(${_osd_lvl})
+        message(STATUS "${_osd_lvl} = ${${_osd_lvl}} mV")
+        add_compile_definitions(${_osd_lvl}=${${_osd_lvl}})
+    endif()
+endforeach()
+
 add_compile_definitions(
         USE_FULL_LL_DRIVER
         USE_HAL_DRIVER
@@ -158,7 +199,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         ./src/tim.c
         ./src/comp.c
         ./src/uart.c
-        ./src/usb.c
         ./src/video_gen.c
         ./src/video_overlay.c
         ./src/canvas_char.c
@@ -199,8 +239,7 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 
 # make a zip file containing the hex, bin, map and elf
 set(ZIP_NAME "${CMAKE_PROJECT_NAME}_${TARGET_MCU}_${CMAKE_BUILD_TYPE}${BUILD_NAME}")
-set(TARGET_LANGUAGES "C;ASM")
-set(MAP_FILE "${PROJECT_BINARY_DIR}/${CMAKE_PROJECT_NAME};LANGUAGES;${TARGET_LANGUAGES}.map")
+set(MAP_FILE "${PROJECT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.map")
 
 # Create ZIP after build completes
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD

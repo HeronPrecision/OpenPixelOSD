@@ -10,7 +10,6 @@
 #include "main.h"
 #include "msp.h"
 #include "uart.h"
-#include "usb.h"
 
 #if defined(BUILD_VARIANT_VTX)
 #include "vtx_msp.h"
@@ -32,7 +31,6 @@ extern uint8_t active_buffer;
 extern bool show_logo;
 
 CCMRAM_BSS static msp_port_t msp_uart = {0};
-CCMRAM_BSS static msp_port_t msp_usb = {0};
 EXEC_RAM static void msp_callback(uint8_t owner, msp_version_t msp_version, uint16_t msp_cmd, uint16_t data_size, const uint8_t *payload);
 
 void msp_displayport_init(void)
@@ -41,9 +39,6 @@ void msp_displayport_init(void)
     uart1_dma_rx_start();
     msp_uart.callback = msp_callback;
     msp_uart.owner = MSP_OWNER_UART;
-
-    msp_usb.callback = msp_callback;
-    msp_usb.owner = MSP_OWNER_USB;
 }
 
 EXEC_RAM static void msp_callback(uint8_t owner, msp_version_t msp_version, uint16_t msp_cmd, uint16_t data_size, const uint8_t *payload)
@@ -70,9 +65,6 @@ EXEC_RAM static void msp_callback(uint8_t owner, msp_version_t msp_version, uint
                     switch(owner) {
                     case MSP_OWNER_UART:
                         uart1_tx_dma(tx_buff, len);
-                        break;
-                    case MSP_OWNER_USB:
-                        usb_uart_write_bytes((const char *)tx_buff, len);
                         break;
                     default:
                         break;
@@ -154,9 +146,6 @@ EXEC_RAM void msp_loop_process(void)
     uint8_t byte;
     while (uart_rx_ring_get(&byte)) {
         msp_process_received_data(&msp_uart, byte);
-    }
-    while (usb_uart_read_byte(&byte)) {
-        msp_process_received_data(&msp_usb, byte);
     }
 
 #if defined(BUILD_VARIANT_VTX)

@@ -22,6 +22,8 @@
 /Release/
 /build/
 /Build/
+/build-*/
+/sync-sweep/
 
 # IDE specific settings (optional: keep these if you want consistent settings)
 /Src/.settings/

@@ -3,6 +3,7 @@
  * Copyright (C) 2025 Vitaliy N <vitaliy.nimych@gmail.com>
  */
 #include "main.h"
+// COMP3/COMP4 input hysteresis (VIDEO_SYNC_HYSTERESIS) is defined in video_config.h.
 
 void COMP3_Init(void)
 {
@@ -31,7 +32,7 @@ void COMP3_Init(void)
 
     COMP_InitStruct.InputPlus = LL_COMP_INPUT_PLUS_IO1;
     COMP_InitStruct.InputMinus = LL_COMP_INPUT_MINUS_DAC1_CH1;
-    COMP_InitStruct.InputHysteresis = LL_COMP_HYSTERESIS_LOW;
+    COMP_InitStruct.InputHysteresis = VIDEO_SYNC_HYSTERESIS;
     COMP_InitStruct.OutputPolarity = LL_COMP_OUTPUTPOL_NONINVERTED;
     COMP_InitStruct.OutputBlankingSource = LL_COMP_BLANKINGSRC_NONE;
     LL_COMP_Init(COMP3, &COMP_InitStruct);
@@ -68,7 +69,7 @@ void COMP4_Init(void)
 
     COMP_InitStruct.InputPlus = LL_COMP_INPUT_PLUS_IO1;
     COMP_InitStruct.InputMinus = LL_COMP_INPUT_MINUS_DAC1_CH1;
-    COMP_InitStruct.InputHysteresis = LL_COMP_HYSTERESIS_LOW;
+    COMP_InitStruct.InputHysteresis = VIDEO_SYNC_HYSTERESIS;
     COMP_InitStruct.OutputPolarity = LL_COMP_OUTPUTPOL_NONINVERTED;
     COMP_InitStruct.OutputBlankingSource = LL_COMP_BLANKINGSRC_NONE;
     LL_COMP_Init(COMP4, &COMP_InitStruct);

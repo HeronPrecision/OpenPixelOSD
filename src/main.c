@@ -5,9 +5,9 @@
 #include "main.h"
 #include "msp_displayport.h"
 #include "system.h"
-#include "usb.h"
 #include "video_gen.h"
 #include "video_overlay.h"
+#include <stdbool.h>
 
 #if defined(BUILD_VARIANT_VTX)
 #include "rtc6705.h"
@@ -27,6 +27,23 @@ extern bool new_field;
 void led_blink(void);
 void logo_timeout_check(void);
 
+// Captured once at boot from RCC_CSR: why the MCU last reset. Shown on the splash so an
+// unexpected reset (e.g. brown-out as the FC/camera rails settle) is visible rather than
+// looking like a firmware glitch. The firmware itself never triggers a reset (no software
+// reset, no IWDG/WWDG), so anything other than PIN/BOR here would be a real surprise.
+const char *g_reset_cause = "?";
+static void capture_reset_cause(void)
+{
+    if      (LL_RCC_IsActiveFlag_LPWRRST()) g_reset_cause = "LPWR";
+    else if (LL_RCC_IsActiveFlag_WWDGRST()) g_reset_cause = "WWDG";
+    else if (LL_RCC_IsActiveFlag_IWDGRST()) g_reset_cause = "IWDG";
+    else if (LL_RCC_IsActiveFlag_SFTRST())  g_reset_cause = "SFT";
+    else if (LL_RCC_IsActiveFlag_OBLRST())  g_reset_cause = "OBL";
+    else if (LL_RCC_IsActiveFlag_BORRST())  g_reset_cause = "BOR/POR";
+    else if (LL_RCC_IsActiveFlag_PINRST())  g_reset_cause = "PIN";
+    LL_RCC_ClearResetFlags(); // so the NEXT boot reports its own cause
+}
+
 void debug_print_loop(void)
 {
     static uint32_t last_tick = 0;
@@ -41,9 +58,9 @@ void debug_print_loop(void)
 int main (void)
 {
     HAL_Init();
+    capture_reset_cause();
     SystemClock_Config();
     gpio_init();
-    usb_init();
     dma_init();
     adc_init();
 

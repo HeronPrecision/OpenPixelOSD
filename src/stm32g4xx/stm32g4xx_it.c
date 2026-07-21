@@ -21,8 +21,6 @@
 #include "main.h"
 #include "stm32g4xx_it.h"
 
-extern PCD_HandleTypeDef hpcd_USB_FS;
-
 /******************************************************************************/
 /*           Cortex-M4 Processor Interruption and Exception Handlers          */
 /******************************************************************************/
@@ -104,8 +102,4 @@ void SysTick_Handler(void)
 //
 // }
 
-void USB_LP_IRQHandler(void)
-{
-    HAL_PCD_IRQHandler(&hpcd_USB_FS);
-}
 
