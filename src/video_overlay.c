@@ -66,14 +66,30 @@ EXEC_RAM static void init_buffers()
     }
 }
 
+/* The default OSD font (font_bf_default.h) has no lowercase letters: codes
+ * 0x61-0x7A hold Betaflight symbol glyphs (heading/home arrows, unit icons)
+ * that a flight controller drives over MSP DisplayPort. Uppercase the splash
+ * text so it renders as readable letters instead of those symbols. */
+static void canvas_char_write_upper(uint8_t x, uint8_t y, const char *s)
+{
+    char buf[COLUMN_SIZE];
+    uint16_t i = 0;
+
+    for (; s[i] != '\0' && i < COLUMN_SIZE; i++) {
+        char c = s[i];
+        buf[i] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+    }
+    canvas_char_write(x, y, buf, i);
+}
+
 static void show_version(void)
 {
     char str[COLUMN_SIZE];
 
-    canvas_char_write(8, 9, "Heron Precision", strlen("Heron Precision"));
-    canvas_char_write(8, 10, "DEV: Chickadee", strlen("DEV: Chickadee"));
+    canvas_char_write_upper(8, 9, "Heron Precision");
+    canvas_char_write_upper(8, 10, "HW: Chickadee");
     sprintf(str, "FW: %s", FW_VERSION);
-    canvas_char_write(8, 11, str, strlen(str));
+    canvas_char_write_upper(8, 11, str);
     canvas_char_draw_complete();
 }
 
