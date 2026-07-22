@@ -172,6 +172,65 @@ void TIM7_Init(void)
     LL_TIM_DisableMasterSlaveMode(TIM7);
 }
 
+/* TIM8_CH1 drives the status LED (PC6, AF4) as a ~1 kHz hardware PWM. The main
+ * loop updates the compare value (led_breathe() in main.c) to produce the slow
+ * breathing effect -- no interrupt, so the video path is completely untouched.
+ * TIM8 is otherwise unused (the final hardware has no RGB LED).
+ * 170 MHz / (169+1) = 1 MHz tick, ARR 999 -> 1 kHz PWM with 1000-step duty. */
+void TIM8_Init(void)
+{
+    LL_TIM_InitTypeDef TIM_InitStruct = {0};
+    LL_TIM_OC_InitTypeDef TIM_OC_InitStruct = {0};
+    LL_TIM_BDTR_InitTypeDef TIM_BDTRInitStruct = {0};
+    LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    /* Peripheral clock enable */
+    LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_TIM8);
+
+    TIM_InitStruct.Prescaler = 169;
+    TIM_InitStruct.CounterMode = LL_TIM_COUNTERMODE_UP;
+    TIM_InitStruct.Autoreload = 999;
+    TIM_InitStruct.ClockDivision = LL_TIM_CLOCKDIVISION_DIV1;
+    TIM_InitStruct.RepetitionCounter = 0;
+    LL_TIM_Init(TIM8, &TIM_InitStruct);
+    LL_TIM_EnableARRPreload(TIM8);
+    LL_TIM_OC_EnablePreload(TIM8, LL_TIM_CHANNEL_CH1);
+
+    TIM_OC_InitStruct.OCMode = LL_TIM_OCMODE_PWM1;
+    TIM_OC_InitStruct.OCState = LL_TIM_OCSTATE_ENABLE;
+    TIM_OC_InitStruct.OCNState = LL_TIM_OCSTATE_DISABLE;
+    TIM_OC_InitStruct.CompareValue = 0;              // start dark; main loop ramps it
+    /* The LED is active HIGH (lit when PC6 is driven high), so the channel drives
+     * HIGH while CNT < CCR: on-time = CCR/(ARR+1), i.e. compare 0 = fully off and
+     * a larger compare = brighter. */
+    TIM_OC_InitStruct.OCPolarity = LL_TIM_OCPOLARITY_HIGH;
+    TIM_OC_InitStruct.OCIdleState = LL_TIM_OCIDLESTATE_LOW;  // pin low (LED off) when outputs disabled
+    LL_TIM_OC_Init(TIM8, LL_TIM_CHANNEL_CH1, &TIM_OC_InitStruct);
+    LL_TIM_OC_DisableFast(TIM8, LL_TIM_CHANNEL_CH1);
+
+    TIM_BDTRInitStruct.OSSRState = LL_TIM_OSSR_DISABLE;
+    TIM_BDTRInitStruct.OSSIState = LL_TIM_OSSI_DISABLE;
+    TIM_BDTRInitStruct.LockLevel = LL_TIM_LOCKLEVEL_OFF;
+    TIM_BDTRInitStruct.DeadTime = 0;
+    TIM_BDTRInitStruct.BreakState = LL_TIM_BREAK_DISABLE;
+    TIM_BDTRInitStruct.BreakPolarity = LL_TIM_BREAK_POLARITY_HIGH;
+    TIM_BDTRInitStruct.AutomaticOutput = LL_TIM_AUTOMATICOUTPUT_DISABLE;
+    LL_TIM_BDTR_Init(TIM8, &TIM_BDTRInitStruct);
+
+    /* PC6 -> TIM8_CH1, AF4 */
+    LL_AHB2_GRP1_EnableClock(LL_AHB2_GRP1_PERIPH_GPIOC);
+    GPIO_InitStruct.Pin = LED_STATE_Pin;
+    GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
+    GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+    GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+    GPIO_InitStruct.Alternate = LL_GPIO_AF_4;
+    LL_GPIO_Init(LED_STATE_GPIO_Port, &GPIO_InitStruct);
+
+    LL_TIM_EnableAllOutputs(TIM8);   // MOE: advanced-timer outputs need this
+    LL_TIM_EnableCounter(TIM8);
+}
+
 void TIM17_Init(void)
 {
     LL_TIM_InitTypeDef TIM_InitStruct = {0};

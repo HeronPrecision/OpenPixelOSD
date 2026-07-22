@@ -20,11 +20,35 @@
 extern bool new_field;
 #endif
 
-#define LED_BLINK_INTERVAL 100 // milliseconds
 #define DEBUG_LOOP_INTERVAL 100 // milliseconds
 #define LOGO_TIMEOUT_MS 4000 // 4 seconds
 
-void led_blink(void);
+/* Status LED "breathing" effect (replaces the old on/off blink).
+ * The LED (PC6) is driven by TIM8_CH1 as a 1 kHz hardware PWM (see tim.c). The
+ * carrier runs entirely in hardware, so there is no interrupt and the video path
+ * is untouched; the main loop just steps the PWM duty through the envelope LUT
+ * below every LED_ENV_STEP_MS, giving a fade-in/fade-out breath over 4 s
+ * (100 entries * 40 ms) that peaks at LED_PEAK_PCT duty. */
+#define LED_PWM_ARR      999u  // must match TIM8 Autoreload in TIM8_Init()
+#define LED_ENV_STEP_MS  40u   // 100 entries * 40 ms = 4 s breath period
+#define LED_PEAK_PCT     10u   // brightest point of the breath (% duty); perceived brighter than 10% (LED response is nonlinear)
+
+/* 100-entry breathing envelope: raised-cosine, gamma 2.2 (perceptually smooth). */
+static const uint8_t LED_BREATH_LUT[100] = {
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+      1,   1,   1,   2,   2,   3,   4,   5,   6,   8,
+     10,  12,  14,  16,  19,  22,  25,  28,  32,  35,
+     39,  43,  47,  52,  56,  60,  64,  69,  73,  76,
+     80,  84,  87,  90,  92,  95,  97,  98,  99, 100,
+    100, 100,  99,  98,  97,  95,  92,  90,  87,  84,
+     80,  76,  73,  69,  64,  60,  56,  52,  47,  43,
+     39,  35,  32,  28,  25,  22,  19,  16,  14,  12,
+     10,   8,   6,   5,   4,   3,   2,   2,   1,   1,
+      1,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+};
+#define LED_ENV_LEN ((uint8_t)(sizeof(LED_BREATH_LUT) / sizeof(LED_BREATH_LUT[0])))
+
+void led_breathe(void);
 void logo_timeout_check(void);
 
 // Captured once at boot from RCC_CSR: why the MCU last reset. Shown on the splash so an
@@ -61,6 +85,7 @@ int main (void)
     capture_reset_cause();
     SystemClock_Config();
     gpio_init();
+    TIM8_Init(); // status-LED breathing: TIM8_CH1 hardware PWM on PC6
     dma_init();
     adc_init();
 
@@ -85,7 +110,7 @@ int main (void)
     while (1)
     {
         msp_loop_process();
-        led_blink();
+        led_breathe();
         debug_print_loop();
         logo_timeout_check();
 
@@ -101,13 +126,22 @@ int main (void)
     }
 }
 
-void led_blink(void)
+/* Step the status-LED breathing envelope. Called every main-loop iteration;
+ * every LED_ENV_STEP_MS it advances one LUT entry and writes the TIM8_CH1
+ * compare value. The 0..100 LUT is scaled to a 0..LED_PEAK_PCT duty span so the
+ * breath tops out at LED_PEAK_PCT of full brightness. */
+void led_breathe(void)
 {
     static uint32_t last_tick = 0;
+    static uint8_t idx = 0;
 
-    if ((HAL_GetTick() - last_tick) >= LED_BLINK_INTERVAL) {
-        LED_STATE_GPIO_Port->ODR ^= LED_STATE_Pin;
+    if ((HAL_GetTick() - last_tick) >= LED_ENV_STEP_MS) {
         last_tick = HAL_GetTick();
+        if (++idx >= LED_ENV_LEN) {
+            idx = 0;
+        }
+        LL_TIM_OC_SetCompareCH1(TIM8,
+            (uint32_t)LED_BREATH_LUT[idx] * (LED_PWM_ARR + 1u) * LED_PEAK_PCT / (100u * 100u));
     }
 }
 
