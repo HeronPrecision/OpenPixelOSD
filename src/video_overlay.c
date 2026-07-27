@@ -13,7 +13,7 @@
 #include "canvas_char.h"
 #include "video_graphics.h"
 #if defined(LOW_RAM)
-#include "fonts/font_bf_default.h"
+#include "fonts/font_data.h"
 #endif
 
 #define TIM2_TICK_MS        (1e6f / 170000000)

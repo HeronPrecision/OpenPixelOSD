@@ -120,6 +120,19 @@ else()
     message(FATAL_ERROR "Unsupported MCU type: ${TARGET_MCU}")
 endif()
 
+# OSD font face: which 12x18 2bpp font_data[] table to compile in.
+#   default  = original Betaflight font (byte-identical to src/fonts/font_bf_default.h)
+#   plexmono | adwaita | iosevka = custom faces (see python/make_pixel_font_2bpp.py
+#              + python/merge_font.py). The lowercase code points 0x61-0x7A (Betaflight
+#              OSD symbols) are preserved in every face.
+set(OSD_FONT "terminus" CACHE STRING "OSD font face: default|terminus")
+set_property(CACHE OSD_FONT PROPERTY STRINGS default terminus)
+set(_OSD_FONT_SRC src/fonts/font_data_${OSD_FONT}.c)
+if(NOT EXISTS "${CMAKE_SOURCE_DIR}/${_OSD_FONT_SRC}")
+    message(FATAL_ERROR "OSD_FONT='${OSD_FONT}' -> ${_OSD_FONT_SRC} not found")
+endif()
+message(STATUS "OSD font face: ${OSD_FONT}")
+
 if(BUILD_VARIANT STREQUAL "VTX")
     message(STATUS "Building with VTX support")
     set(BUILD_NAME "_VTX")
@@ -207,6 +220,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         ./src/canvas_char.c
         ./src/msp_displayport.c
         ./src/fonts/update_font.c
+        ${_OSD_FONT_SRC}
         ./src/video_graphics.c
         ./src/main.c
 
