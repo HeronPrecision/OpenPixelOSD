@@ -160,6 +160,23 @@ if(VIDEO_CAMERA_ONLY)
     add_compile_definitions(VIDEO_CAMERA_ONLY)
 endif()
 
+# Debug tuning harness (no scope needed): holds the splash/logo on screen and live-sweeps the
+# COMP3 sync threshold, printing the current value + the boot reset-cause (PIN/BOR) so the
+# warm-reset OSD horizontal smear can be diagnosed by eye. See video_overlay.c (OSD_TUNING_MODE).
+option(OSD_TUNING_MODE "Debug: hold splash + live sync-threshold sweep with on-screen readout" OFF)
+if(OSD_TUNING_MODE)
+    message(STATUS "DEBUG build: OSD_TUNING_MODE enabled (splash held + threshold sweep)")
+    add_compile_definitions(OSD_TUNING_MODE)
+endif()
+
+# Boot "wave" animation: after the splash clears, a diagonal band of '+' sweeps top-left to
+# bottom-right (~300 ms). See video_overlay.c (OSD_BOOT_ANIMATION / video_boot_animation_update).
+option(OSD_BOOT_ANIMATION "Power-up OSD '+' wave animation" ON)
+if(OSD_BOOT_ANIMATION)
+    message(STATUS "OSD boot fade-in animation enabled")
+    add_compile_definitions(OSD_BOOT_ANIMATION)
+endif()
+
 # COMP3/COMP4 video-sync detection threshold (mV). Empty = firmware default (162 mV).
 # Sweep per-camera to fix intermittent sync lock, e.g. -DVIDEO_SYNC_THRESHOLD_MV=200
 set(VIDEO_SYNC_THRESHOLD_MV "" CACHE STRING "Video sync detection threshold in mV")

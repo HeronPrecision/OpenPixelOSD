@@ -20,18 +20,33 @@
 extern bool new_field;
 #endif
 
+/* True while the internal sync generator is running (no external camera sync seen for ~1 s);
+ * false while an external (camera) video signal is locked and in use. Defined in video_gen.c. */
+extern volatile bool video_gen_enabled;
+
 #define DEBUG_LOOP_INTERVAL 100 // milliseconds
 #define LOGO_TIMEOUT_MS 4000 // 4 seconds
 
-/* Status LED "breathing" effect (replaces the old on/off blink).
- * The LED (PC6) is driven by TIM8_CH1 as a 1 kHz hardware PWM (see tim.c). The
- * carrier runs entirely in hardware, so there is no interrupt and the video path
- * is untouched; the main loop just steps the PWM duty through the envelope LUT
- * below every LED_ENV_STEP_MS, giving a fade-in/fade-out breath over 4 s
- * (100 entries * 40 ms) that peaks at LED_PEAK_PCT duty. */
+/* Status LED (PC6, driven by TIM8_CH1 1 kHz hardware PWM -- see tim.c) doubles as an
+ * external-video-lock indicator:
+ *   - On boot it emits LED_BOOT_BLINKS confirmation blinks (LED_BLINK_MS on / off each) so a
+ *     human can see the firmware is alive.
+ *   - It then stays OFF until an external (camera) video signal is locked, at which point it
+ *     runs the slow breathing envelope below (fade-in/fade-out over 4 s, peaking at
+ *     LED_PEAK_PCT duty). When the external signal is lost the internal sync generator takes
+ *     over and the LED goes dark again.
+ * The carrier runs entirely in hardware (no interrupt), so the video path is untouched; the
+ * main loop just steps the PWM duty. "External signal locked" is read from video_gen_enabled:
+ * false == generator off == camera signal in use, true == generator running because no camera
+ * sync was seen for ~1 s (the TIM4 watchdog). */
 #define LED_PWM_ARR      999u  // must match TIM8 Autoreload in TIM8_Init()
 #define LED_ENV_STEP_MS  40u   // 100 entries * 40 ms = 4 s breath period
 #define LED_PEAK_PCT     10u   // brightest point of the breath (% duty); perceived brighter than 10% (LED response is nonlinear)
+#define LED_BOOT_BLINKS  3u    // confirmation blinks emitted once after reset
+#define LED_BLINK_MS     200u  // on/off duration of each confirmation blink (ms)
+#define LED_BLINK_PCT    100u  // boot-blink brightness (% duty): full-on so the 3 confirmation
+                               // blinks read crisp and unmistakable, clearly apart from the soft
+                               // (LED_PEAK_PCT) breathing that only starts once they finish
 
 /* 100-entry breathing envelope: raised-cosine, gamma 2.2 (perceptually smooth). */
 static const uint8_t LED_BREATH_LUT[100] = {
@@ -48,7 +63,13 @@ static const uint8_t LED_BREATH_LUT[100] = {
 };
 #define LED_ENV_LEN ((uint8_t)(sizeof(LED_BREATH_LUT) / sizeof(LED_BREATH_LUT[0])))
 
-void led_breathe(void);
+/* Map a 0..100 "brightness" value to the TIM8_CH1 compare register (0..LED_PWM_ARR+1). */
+static inline void led_set_pct(uint8_t pct)
+{
+    LL_TIM_OC_SetCompareCH1(TIM8, (uint32_t)pct * (LED_PWM_ARR + 1u) / 100u);
+}
+
+void led_update(void);
 void logo_timeout_check(void);
 
 // Captured once at boot from RCC_CSR: why the MCU last reset. Shown on the splash so an
@@ -110,9 +131,15 @@ int main (void)
     while (1)
     {
         msp_loop_process();
-        led_breathe();
+        led_update();
         debug_print_loop();
         logo_timeout_check();
+#ifdef OSD_TUNING_MODE
+        video_tuning_step();
+#endif
+#ifdef OSD_BOOT_ANIMATION
+        video_boot_animation_update();
+#endif
 
 #if 0 // TODO: remove later
 // For test only - 3D cube animation
@@ -126,27 +153,65 @@ int main (void)
     }
 }
 
-/* Step the status-LED breathing envelope. Called every main-loop iteration;
- * every LED_ENV_STEP_MS it advances one LUT entry and writes the TIM8_CH1
- * compare value. The 0..100 LUT is scaled to a 0..LED_PEAK_PCT duty span so the
- * breath tops out at LED_PEAK_PCT of full brightness. */
-void led_breathe(void)
+/* Drive the status LED. Called every main-loop iteration; a small state machine that first
+ * emits the boot confirmation blinks, then tracks external video lock via video_gen_enabled
+ * and either breathes (locked) or stays dark (no external signal). */
+void led_update(void)
 {
+    enum { LED_BOOT, LED_OFF, LED_BREATHING };
+    static uint8_t state = LED_BOOT;
     static uint32_t last_tick = 0;
-    static uint8_t idx = 0;
+    static uint8_t idx = 0;     // breathing LUT index, or boot-blink half-cycle counter
 
-    if ((HAL_GetTick() - last_tick) >= LED_ENV_STEP_MS) {
-        last_tick = HAL_GetTick();
-        if (++idx >= LED_ENV_LEN) {
-            idx = 0;
+    const uint32_t now = HAL_GetTick();
+
+    switch (state) {
+    case LED_BOOT:
+        if ((now - last_tick) >= LED_BLINK_MS) {
+            last_tick = now;
+            // Full-bright on/off so the blinks are unmistakable and distinct from the soft
+            // breathing -- never blends with it, because breathing only starts (LED_BREATHING)
+            // after this phase completes.
+            led_set_pct(((idx & 1u) == 0u) ? LED_BLINK_PCT : 0u);  // even half-cycle = LED on
+            if (++idx >= (LED_BOOT_BLINKS * 2u)) {
+                idx = 0;
+                state = LED_OFF;            // confirmation done; go dark until a signal appears
+            }
         }
-        LL_TIM_OC_SetCompareCH1(TIM8,
-            (uint32_t)LED_BREATH_LUT[idx] * (LED_PWM_ARR + 1u) * LED_PEAK_PCT / (100u * 100u));
+        break;
+
+    case LED_OFF:
+        if (video_gen_enabled == false) {   // external camera signal locked
+            idx = 0;
+            last_tick = now;
+            state = LED_BREATHING;
+        } else {
+            led_set_pct(0u);                // no external signal: stay dark
+        }
+        break;
+
+    case LED_BREATHING:
+        if (video_gen_enabled == true) {    // external signal lost -> generator took over
+            led_set_pct(0u);
+            state = LED_OFF;
+        } else if ((now - last_tick) >= LED_ENV_STEP_MS) {
+            last_tick = now;
+            if (++idx >= LED_ENV_LEN) {
+                idx = 0;
+            }
+            led_set_pct((uint8_t)((uint32_t)LED_BREATH_LUT[idx] * LED_PEAK_PCT / 100u));
+        }
+        break;
     }
 }
 
 void logo_timeout_check(void)
 {
+#ifdef OSD_TUNING_MODE
+    // Tuning mode: hold the splash/logo on screen indefinitely so the threshold-sweep
+    // readout (video_draw_tuning_splash) stays visible for interactive debugging.
+    return;
+#else
     static uint32_t boot_time = 0;
     static bool timeout_checked = false;
     extern bool show_logo;
@@ -164,4 +229,5 @@ void logo_timeout_check(void)
         canvas_char_draw_complete();
         timeout_checked = true;
     }
+#endif
 }

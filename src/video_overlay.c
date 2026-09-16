@@ -12,6 +12,9 @@
 #include "logo/logo.h"
 #include "canvas_char.h"
 #include "video_graphics.h"
+#ifdef OSD_BOOT_ANIMATION
+#include "boot_wave.h"
+#endif
 #if defined(LOW_RAM)
 #include "fonts/font_data.h"
 #endif
@@ -50,6 +53,10 @@ extern char canvas_char_map[2][ROW_SIZE][COLUMN_SIZE];
 extern uint8_t active_buffer;
 CCMRAM_DATA bool show_logo = true;
 CCMRAM_BSS bool new_field = false;
+
+/* Runtime sync-detection threshold (mV). Defaults to VIDEO_SYNC_THRESHOLD_MV; the OSD_TUNING_MODE
+ * harness sweeps it live. video_apply_sync_threshold() pushes it to DAC1_CH1 (COMP3/COMP4 '-'). */
+uint16_t g_video_sync_threshold_mv = VIDEO_SYNC_THRESHOLD_MV;
 
 #if defined(HIGH_RAM)
 extern uint8_t active_video_buffer;
@@ -92,6 +99,130 @@ static void show_version(void)
     canvas_char_write_upper(8, 11, str);
     canvas_char_draw_complete();
 }
+
+/* Push g_video_sync_threshold_mv -> DAC1_CH1 (the COMP3/COMP4 '-' reference). Called at init, from
+ * video_gen_start/stop, and by the tuning sweep whenever the value changes. */
+void video_apply_sync_threshold(void)
+{
+    LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, DAC12BIT_FROM_MV(g_video_sync_threshold_mv));
+    LL_DAC_TrigSWConversion(DAC1, LL_DAC_CHANNEL_1);
+}
+
+#ifdef OSD_BOOT_ANIMATION
+/* Boot "wave" flourish: a diagonal band sweeps from the top-left corner to the bottom-right
+ * one over BOOT_WAVE_DURATION_MS, starting the instant the splash clears, and leaves the
+ * canvas clear when it is done.
+ *
+ * The shape of the band lives in src/boot_wave.h, which has no firmware dependencies so that
+ * tools/wave_preview.py can render and validate it on a host:
+ *   tools/wave_preview.py check     assert both edges stay unbroken straight lines
+ *   tools/wave_preview.py html      watch it, real glyphs, real aspect, in a browser
+ * Workshop the look in that header, not here. */
+void video_boot_animation_update(void)
+{
+    static uint8_t  state = 0;       /* 0 = waiting for splash to clear, 1 = running, 2 = done */
+    static uint32_t start_tick = 0;
+    static uint32_t last_frame = 0;
+
+    if (state == 2) {
+        return;
+    }
+    if (state == 0) {
+        if (show_logo) {
+            return;                  /* splash still up -- wait */
+        }
+        start_tick = HAL_GetTick();
+        last_frame = start_tick;
+        state = 1;
+    }
+
+    const uint32_t now     = HAL_GetTick();
+    const uint32_t elapsed = now - start_tick;
+
+    if (elapsed >= BOOT_WAVE_DURATION_MS) {
+        canvas_char_clean();         /* clear + arm swap */
+        canvas_char_draw_complete();
+        state = 2;
+        return;
+    }
+    if ((now - last_frame) < BOOT_WAVE_FRAME_MS) {
+        return;                      /* throttle to ~60 fps */
+    }
+    last_frame = now;
+
+    const int32_t front = boot_wave_front(elapsed, ROW_SIZE, COLUMN_SIZE);
+
+    canvas_char_clean();             /* clear active buffer + arm the swap */
+    for (uint8_t r = 0; r < ROW_SIZE; r++) {
+        for (uint8_t c = 0; c < COLUMN_SIZE; c++) {
+            /* Diagonal distance behind the leading edge. Mirrored in wave_preview.py. */
+            const char glyph = boot_wave_glyph(front - (int32_t)r - (int32_t)c);
+            if (glyph != '\0') {
+                canvas_char_map[active_buffer][r][c] = glyph;
+            }
+        }
+    }
+    canvas_char_draw_complete();
+}
+#endif /* OSD_BOOT_ANIMATION */
+
+#ifdef OSD_TUNING_MODE
+/* --- Interactive tuning harness (no scope needed) ---------------------------------------
+ * With no oscilloscope, the OSD text is the instrument. This slowly auto-sweeps the COMP3 sync
+ * threshold across a safe range and prints the current value + the boot reset-cause (PIN/BOR) on
+ * the (held) splash, so the warm-reset horizontal smear can be watched sharpen/blur against the
+ * number by eye. Enable with -DOSD_TUNING_MODE=ON; splash timeout is disabled under the same flag
+ * in main.c::logo_timeout_check.
+ *
+ * The full splash is redrawn each tick so both canvas double-buffers carry identical text (no
+ * flicker as the threshold sweeps). */
+#define SWEEP_MIN_MV     260u
+#define SWEEP_MAX_MV     440u
+#define SWEEP_STEP_MV    20u
+#define SWEEP_PERIOD_MS  2000u
+
+void video_draw_tuning_splash(void)
+{
+    char str[COLUMN_SIZE];
+    /* canvas_char_draw_complete() only swaps the display buffer when canvas_write_next_buff is
+     * armed (by flush_map/clean, not by canvas_char_write). clean() clears the active buffer to
+     * spaces AND re-arms the swap, so the THR line we write here actually publishes. */
+    canvas_char_clean();
+    canvas_char_write_upper(8, 9, "Heron Precision");
+    canvas_char_write_upper(8, 10, "HW: Chickadee");
+    snprintf(str, sizeof(str), "FW: %s", FW_VERSION);
+    canvas_char_write_upper(8, 11, str);
+    snprintf(str, sizeof(str), "THR %dmV RST:%s", (int)g_video_sync_threshold_mv, g_reset_cause);
+    canvas_char_write_upper(8, 13, str);
+    canvas_char_draw_complete();
+}
+
+/* Called every main-loop iteration; steps the threshold every SWEEP_PERIOD_MS. */
+void video_tuning_step(void)
+{
+    static uint32_t last_tick = 0;
+    static int8_t dir = 1;
+    const uint32_t now = HAL_GetTick();
+
+    if ((now - last_tick) < SWEEP_PERIOD_MS) {
+        return;
+    }
+    last_tick = now;
+
+    int32_t v = (int32_t)g_video_sync_threshold_mv + (int32_t)dir * (int32_t)SWEEP_STEP_MV;
+    if (v >= (int32_t)SWEEP_MAX_MV) {
+        v = (int32_t)SWEEP_MAX_MV;
+        dir = -1;
+    } else if (v <= (int32_t)SWEEP_MIN_MV) {
+        v = (int32_t)SWEEP_MIN_MV;
+        dir = 1;
+    }
+    g_video_sync_threshold_mv = (uint16_t)v;
+
+    video_apply_sync_threshold();
+    video_draw_tuning_splash();
+}
+#endif /* OSD_TUNING_MODE */
 
 void video_overlay_init(void)
 {
@@ -147,8 +278,7 @@ void video_overlay_init(void)
     LL_TIM_CC_EnableChannel(TIM3, LL_TIM_CHANNEL_CH1);
 
     LL_DAC_Enable(DAC1, LL_DAC_CHANNEL_1);
-    LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, VIDE_DETECTION_MV);
-    LL_DAC_TrigSWConversion(DAC1, LL_DAC_CHANNEL_1);
+    video_apply_sync_threshold();
 
     LL_DAC_Enable(DAC3, LL_DAC_CHANNEL_1);
     LL_DAC_ConvertData12RightAligned(DAC3, LL_DAC_CHANNEL_1, DAC_BLACK);
@@ -164,6 +294,9 @@ void video_overlay_init(void)
 #endif
 
     show_version();
+#ifdef OSD_TUNING_MODE
+    video_draw_tuning_splash();   // tuning splash: version + threshold + boot reset-cause
+#endif
 }
 
 #if defined(LOW_RAM)

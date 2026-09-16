@@ -143,7 +143,21 @@ typedef enum {
 // All analog-video tuning (sync threshold, hysteresis, OSD pixel levels - all in mV) lives in
 // one place: edit src/video_config.h to retune for a different camera / analog front end.
 #include "video_config.h"
-#define VIDE_DETECTION_MV       DAC12BIT_FROM_MV(VIDEO_SYNC_THRESHOLD_MV) // mV -> DAC1_CH1 code
+
+/* Runtime-tunable sync-detection threshold (mV). Defaults to VIDEO_SYNC_THRESHOLD_MV above;
+ * defined in video_overlay.c. video_apply_sync_threshold() writes it to DAC1_CH1 (the COMP3/COMP4
+ * '-' reference). The OSD_TUNING_MODE harness sweeps it live. */
+extern uint16_t g_video_sync_threshold_mv;
+void video_apply_sync_threshold(void);
+extern const char *g_reset_cause;   /* set once at boot in main.c::capture_reset_cause */
+
+#ifdef OSD_TUNING_MODE
+void video_tuning_step(void);      /* call from main loop: advance the threshold sweep */
+#endif
+
+#ifdef OSD_BOOT_ANIMATION
+void video_boot_animation_update(void);  /* call from main loop: one-shot power-up '+' wave */
+#endif
 
 void gpio_init(void);
 void adc_init(void);
