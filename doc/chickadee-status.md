@@ -56,6 +56,30 @@ repository. Two behaviours of this firmware matter to it:
 - Font: terminus was picked on 2026-07-27 after rendering adwaita, iosevka, menlo, plexmono
   and terminus candidates with the `python/` scripts.
 
+## Sync threshold auto-calibration (2026-11-26)
+
+`OSD_AUTO_SYNC_CAL` (CMake option, default ON; forced off in tuning and passthrough builds).
+At power-up, and whenever a camera appears after the internal generator was running, the firmware
+sweeps COMP3's threshold (DAC1_CH1) from 40 to 600 mV in 10 mV steps, 40 ms each. The TIM2
+interrupt counts line-length intervals (59 to 65 us) versus chatter per step, and
+`src/sync_calib.h` picks the centre of the widest window in which nearly every line is
+recognised. If no window exists the fixed `VIDEO_SYNC_THRESHOLD_MV` (350) stays. The generator
+(COMP4) always uses the fixed value. The splash is held back until the sweep ends and then
+shows `SYNC nnnMV AUTO` and `WIN lo-hiMV` (or `SYNC 350MV DEFAULT`).
+
+Why: the RC4 camera has its sync tip at ~110 mV and colour burst down to ~180 mV, so the old
+fixed 350 mV sat inside the burst and the line parser recognised no lines at all (vertical
+wander, blurred text). Evidence and per-camera numbers: `doc/camera-waveforms/`. Any change to
+sync detection must be rechecked against every capture listed there. Host test:
+`cc -o /tmp/t tools/sync_calib_test.c && /tmp/t`.
+
+Known limits: a camera that produces no edges at all at the default threshold never starts the
+sweep; signals that swing below 0 V need AC coupling and a clamp in hardware first.
+
+Related fix: the linker's `.ccmram_bss` is NOLOAD and the startup code never zeroed it, so CCM
+variables (`video_gen_enabled`, `new_field`, `msp_uart`, ...) started with random or stale data.
+Both startup files now zero-fill it.
+
 ## Open items
 
 1. `BOOT_WAVE_DURATION_MS` in `src/boot_wave.h` is 4000, a "10x for testing" value. The

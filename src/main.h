@@ -2,6 +2,7 @@
 #ifndef __MAIN_H
 #define __MAIN_H
 
+#include <stdbool.h>
 #include "stm32g4xx_hal.h"
 #include "stm32g4xx_ll_comp.h"
 #include "stm32g4xx_ll_exti.h"
@@ -149,6 +150,14 @@ typedef enum {
  * '-' reference). The OSD_TUNING_MODE harness sweeps it live. */
 extern uint16_t g_video_sync_threshold_mv;
 void video_apply_sync_threshold(void);
+/* Same, but for an explicit mode (used by video_gen_start/stop, which run before the
+ * video_gen_enabled flag flips). Generator mode always uses the fixed VIDEO_SYNC_THRESHOLD_MV when
+ * OSD_AUTO_SYNC_CAL is on, because only the camera threshold is calibrated. */
+void video_apply_sync_threshold_for(bool generator_active);
+#ifdef OSD_AUTO_SYNC_CAL
+void video_sync_cal_step(void);     /* call from main loop: auto-calibrate the camera sync threshold */
+bool video_sync_cal_busy(void);     /* true while a calibration sweep is running */
+#endif
 extern const char *g_reset_cause;   /* set once at boot in main.c::capture_reset_cause */
 
 #ifdef OSD_TUNING_MODE

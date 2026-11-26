@@ -1,0 +1,55 @@
+samples 400000, span 200.0 us, dt 0.50 ns, min -0.046 V, max 1.262 V
+sync tip   : median 0.110 V, range 0.060..0.140 V (n=26858)
+
+threshold sweep (hysteresis 10 mV); ideal = 3 falling edge(s) per capture (one per line):
+  th(mV)  falling-edges
+    120   179
+    130   38
+    140   21
+    150   17
+    160   16
+    170   16
+    180   12
+    190   15
+    200   21
+    210   36
+    220   47
+    230   45
+    240   44
+    250   37
+    260   37
+    270   34
+    280   39
+    290   42
+    300   38
+    310   43
+    320   51
+    330   57
+    340   78
+    350   94
+    360   114
+    370   127
+    380   147
+    390   213
+    400   437
+    410   399
+    420   184
+    430   141
+    440   160
+    450   158
+    460   169
+    470   164
+    480   171
+    490   183
+    500   185
+    510   210
+    520   206
+    530   184
+    540   167
+    550   147
+    560   144
+
+best window: 180..180 mV with <= 14 falling edges (ideal 3), midpoint 180 mV
+WARNING: no threshold gives one clean edge per line; the signal chatters even at the best
+         setting (colour burst, ringing or noise reaching the sync level). A fixed threshold
+         alone will not be stable; consider a filter ahead of the comparator or blanking.

@@ -29,6 +29,7 @@ typedef enum {
 extern char canvas_char_map[2][ROW_SIZE][COLUMN_SIZE];
 extern uint8_t active_buffer;
 extern bool show_logo;
+bool g_msp_host_seen = false;   /* set once a flight controller opens the DisplayPort (suppresses the splash) */
 
 CCMRAM_BSS static msp_port_t msp_uart = {0};
 EXEC_RAM static void msp_callback(uint8_t owner, msp_version_t msp_version, uint16_t msp_cmd, uint16_t data_size, const uint8_t *payload);
@@ -57,6 +58,7 @@ EXEC_RAM static void msp_callback(uint8_t owner, msp_version_t msp_version, uint
                     vtx_msp_request_config(owner);
                     #endif
                     displayport_initialized = true;
+                    g_msp_host_seen = true;
                     show_logo = false;
                     // Send canvas size to FC
                     uint8_t data[2] = {COLUMN_SIZE, ROW_SIZE};

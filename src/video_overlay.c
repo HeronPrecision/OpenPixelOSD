@@ -15,6 +15,9 @@
 #ifdef OSD_BOOT_ANIMATION
 #include "boot_wave.h"
 #endif
+#ifdef OSD_AUTO_SYNC_CAL
+#include "sync_calib.h"
+#endif
 #if defined(LOW_RAM)
 #include "fonts/font_data.h"
 #endif
@@ -100,13 +103,75 @@ static void show_version(void)
     canvas_char_draw_complete();
 }
 
-/* Push g_video_sync_threshold_mv -> DAC1_CH1 (the COMP3/COMP4 '-' reference). Called at init, from
- * video_gen_start/stop, and by the tuning sweep whenever the value changes. */
-void video_apply_sync_threshold(void)
+/* Push the sync threshold -> DAC1_CH1 (the COMP3/COMP4 '-' reference). Called at init, from
+ * video_gen_start/stop, by the tuning sweep and by the auto-calibration whenever the value changes.
+ * COMP3 (camera) uses g_video_sync_threshold_mv, which auto-calibration may change. COMP4 (internal
+ * generator) keeps the fixed default: its level does not depend on the camera. */
+void video_apply_sync_threshold_for(bool generator_active)
 {
-    LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, DAC12BIT_FROM_MV(g_video_sync_threshold_mv));
+#ifdef OSD_AUTO_SYNC_CAL
+    const uint16_t mv = generator_active ? (uint16_t)VIDEO_SYNC_THRESHOLD_MV : g_video_sync_threshold_mv;
+#else
+    (void)generator_active;
+    const uint16_t mv = g_video_sync_threshold_mv;
+#endif
+    LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, DAC12BIT_FROM_MV(mv));
     LL_DAC_TrigSWConversion(DAC1, LL_DAC_CHANNEL_1);
 }
+
+void video_apply_sync_threshold(void)
+{
+    video_apply_sync_threshold_for(video_gen_enabled);
+}
+
+#ifdef OSD_AUTO_SYNC_CAL
+/* ---- Sync-threshold auto-calibration -------------------------------------------------------
+ * Camera levels differ (the RC4 camera has its sync tip at ~110 mV and colour burst down to
+ * ~180 mV, the FC1 cameras ~216 mV / 480 mV blanking), and one fixed threshold cannot serve both:
+ * at 350 mV the RC4 camera's line parser recognised no lines at all. So at power-up (and whenever
+ * a camera appears after the generator was running) we sweep DAC1_CH1 and let the TIM2 interrupt
+ * count, per step, line-length intervals (59..65 us) versus chatter. sync_calib.h picks the centre
+ * of the widest usable window; if none exists the fixed default stays. See
+ * doc/camera-waveforms/ and tools/sync_calib_test.c. */
+#define CAL_START_MV     40
+#define CAL_END_MV       600
+#define CAL_STEP_MV      10
+#define CAL_DWELL_MS     40      /* ~2 fields per step */
+#define CAL_PROBE_MS     100     /* wait this long for ANY edges before sweeping */
+#define CAL_MIN_EDGES    100     /* edges in CAL_PROBE_MS that mean "a camera is there" */
+#define CAL_TICKS_PER_US 170u    /* TIM2 clock */
+
+static volatile uint8_t  g_cal_active;
+static volatile uint32_t g_cal_edges, g_cal_good, g_cal_other;
+uint16_t g_video_cal_threshold_mv;      /* 0 = not calibrated (default in use) */
+uint16_t g_video_cal_width_mv;
+static uint32_t g_cal_end_tick;
+
+/* Quiet seek: the splash is not drawn until calibration has finished, so the seek shows plain
+ * camera video with an empty canvas (the same state as after the splash times out). The line
+ * pipeline is NOT touched during the sweep. g_splash_pending gates the splash, the boot animation
+ * and the logo timeout (main.c). */
+bool     g_splash_pending = true;
+uint32_t g_splash_release_tick;
+extern bool g_msp_host_seen;
+
+/* Called from TIM2_IRQHandler for every camera edge while a sweep is running. */
+static inline void cal_count_interval(uint32_t ticks)
+{
+    g_cal_edges++;
+    if (ticks > 59u * CAL_TICKS_PER_US && ticks < 65u * CAL_TICKS_PER_US) {
+        g_cal_good++;                                   /* a line */
+    } else if (ticks >= 1u * CAL_TICKS_PER_US &&
+               !(ticks > 29u * CAL_TICKS_PER_US && ticks < 33u * CAL_TICKS_PER_US)) {
+        g_cal_other++;                                  /* chatter (not a vsync half-line, not a <1 us double trigger) */
+    }
+}
+
+bool video_sync_cal_busy(void)
+{
+    return g_cal_active != 0;
+}
+#endif /* OSD_AUTO_SYNC_CAL */
 
 #ifdef OSD_BOOT_ANIMATION
 /* Boot "wave" flourish: a diagonal band sweeps from the top-left corner to the bottom-right
@@ -128,8 +193,12 @@ void video_boot_animation_update(void)
         return;
     }
     if (state == 0) {
-        if (show_logo) {
-            return;                  /* splash still up -- wait */
+        if (show_logo
+#ifdef OSD_AUTO_SYNC_CAL
+            || g_splash_pending
+#endif
+            ) {
+            return;                  /* splash still up (or not yet shown) -- wait */
         }
         start_tick = HAL_GetTick();
         last_frame = start_tick;
@@ -293,7 +362,12 @@ void video_overlay_init(void)
     LL_TIM_EnableCounter(TIM4);
 #endif
 
+#ifdef OSD_AUTO_SYNC_CAL
+    show_logo = false;           /* quiet seek: the splash is released after calibration */
+    g_splash_pending = true;
+#else
     show_version();
+#endif
 #ifdef OSD_TUNING_MODE
     video_draw_tuning_splash();   // tuning splash: version + threshold + boot reset-cause
 #endif
@@ -541,6 +615,11 @@ EXEC_RAM void TIM2_IRQHandler(void)
             LL_TIM_DisableCounter(TIM1);
             LL_TIM_SetETRSource(TIM1, LL_TIM_TIM1_ETRSOURCE_COMP3);
         } else {
+#ifdef OSD_AUTO_SYNC_CAL
+            if (g_cal_active) {
+                cal_count_interval(TIM2->CCR1);
+            }
+#endif
             pars_video_signal(TIM2->CCR1);
         }
         LL_TIM_ClearFlag_CC1(TIM2);
@@ -579,3 +658,125 @@ EXEC_RAM void TIM4_IRQHandler(void)
         LL_TIM_ClearFlag_UPDATE(TIM4);
     }
 }
+
+#ifdef OSD_AUTO_SYNC_CAL
+/* Show the splash (once), unless a flight controller already took over the screen. */
+static void splash_release(const char *line12, const char *line13)
+{
+    if (!g_splash_pending) {
+        return;
+    }
+    g_splash_pending = false;
+    g_splash_release_tick = HAL_GetTick();
+    if (g_msp_host_seen) {
+        return;
+    }
+    show_version();                              /* rows 9-11, calls canvas_char_draw_complete() */
+    if (line12) {
+        canvas_char_write_upper(8, 12, line12);
+    }
+    if (line13) {
+        canvas_char_write_upper(8, 13, line13);
+    }
+    canvas_char_draw_complete();
+    show_logo = true;
+}
+
+/* Run from the main loop. Waits for a locked camera, sweeps the threshold, applies the pick. */
+void video_sync_cal_step(void)
+{
+    enum { CAL_WAIT_CAMERA, CAL_PROBE, CAL_SWEEP, CAL_DONE };
+    static uint8_t state = CAL_WAIT_CAMERA;
+    static uint32_t t0 = 0;
+    static uint16_t th = 0;
+    static uint8_t n = 0;
+    static bool prev_gen = false;
+    static sync_cal_point_t pts[SYNC_CAL_MAX_POINTS];
+    const uint32_t now = HAL_GetTick();
+
+    /* A camera appearing after the generator was running needs a fresh calibration. */
+    if (prev_gen && !video_gen_enabled && state == CAL_DONE) {
+        state = CAL_WAIT_CAMERA;
+    }
+    prev_gen = video_gen_enabled;
+
+    /* No camera (the generator took over) or something went wrong: show the splash anyway. */
+    if (g_splash_pending && (video_gen_enabled || now > 10000u)) {
+        splash_release(NULL, NULL);
+    }
+
+    switch (state) {
+    case CAL_WAIT_CAMERA:
+        if (!video_gen_enabled) {               /* camera edges are stopping the generator */
+            g_cal_edges = 0;
+            g_cal_active = 1;
+            t0 = now;
+            state = CAL_PROBE;
+        }
+        break;
+
+    case CAL_PROBE:                              /* is there really a camera signal? */
+        if (video_gen_enabled) {                 /* no: the watchdog started the generator */
+            g_cal_active = 0;
+            state = CAL_WAIT_CAMERA;
+        } else if ((now - t0) >= CAL_PROBE_MS) {
+            if (g_cal_edges >= CAL_MIN_EDGES) {
+                n = 0;
+                th = CAL_START_MV;
+                g_video_sync_threshold_mv = th;
+                video_apply_sync_threshold();
+                g_cal_edges = g_cal_good = g_cal_other = 0;
+                t0 = now;
+                state = CAL_SWEEP;
+            } else {
+                g_cal_edges = 0;
+                t0 = now;
+            }
+        }
+        break;
+
+    case CAL_SWEEP:
+        if (video_gen_enabled) {                 /* lost the camera mid-sweep: back to the default */
+            g_cal_active = 0;
+            g_video_sync_threshold_mv = VIDEO_SYNC_THRESHOLD_MV;
+            video_apply_sync_threshold();
+            state = CAL_WAIT_CAMERA;
+        } else if ((now - t0) >= CAL_DWELL_MS) {
+            g_cal_active = 0;                    /* freeze the counters while we read them */
+            pts[n].th_mv = th;
+            pts[n].good = g_cal_good;
+            pts[n].other = g_cal_other;
+            n++;
+            th += CAL_STEP_MV;
+            if (th > CAL_END_MV || n >= SYNC_CAL_MAX_POINTS) {
+                uint16_t mv = 0, width = 0;
+                const int ok = sync_cal_pick(pts, n, &mv, &width);
+                g_video_cal_threshold_mv = ok ? mv : 0;
+                g_video_cal_width_mv = ok ? width : 0;
+                g_video_sync_threshold_mv = ok ? mv : (uint16_t)VIDEO_SYNC_THRESHOLD_MV;
+                video_apply_sync_threshold();
+                g_cal_end_tick = now;
+                {
+                    char l12[COLUMN_SIZE], l13[COLUMN_SIZE];
+                    snprintf(l12, sizeof(l12), ok ? "SYNC %uMV AUTO" : "SYNC %uMV DEFAULT",
+                             (unsigned)g_video_sync_threshold_mv);
+                    snprintf(l13, sizeof(l13), "WIN %u-%uMV", (unsigned)(mv - width / 2u), (unsigned)(mv + width / 2u));
+                    splash_release(l12, ok ? l13 : NULL);
+                }
+                state = CAL_DONE;
+            } else {
+                g_video_sync_threshold_mv = th;
+                video_apply_sync_threshold();
+                g_cal_edges = g_cal_good = g_cal_other = 0;
+                g_cal_active = 1;
+                t0 = now;
+            }
+        }
+        break;
+
+    case CAL_DONE:
+    default:
+        break;
+    }
+}
+#endif /* OSD_AUTO_SYNC_CAL */

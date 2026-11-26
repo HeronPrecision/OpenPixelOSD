@@ -177,6 +177,16 @@ if(OSD_BOOT_ANIMATION)
     add_compile_definitions(OSD_BOOT_ANIMATION)
 endif()
 
+# Auto-calibrate the camera sync threshold at power-up / camera appearance: sweeps DAC1_CH1 and
+# picks the centre of the widest window in which the line parser recognises (nearly) every line.
+# Falls back to VIDEO_SYNC_THRESHOLD_MV when no window is found. See src/sync_calib.h and
+# doc/camera-waveforms/. Forced OFF in OSD_TUNING_MODE (which sweeps the threshold itself).
+option(OSD_AUTO_SYNC_CAL "Auto-calibrate the camera sync threshold" ON)
+if(OSD_AUTO_SYNC_CAL AND NOT OSD_TUNING_MODE AND NOT VIDEO_PASSTHROUGH_TEST)
+    message(STATUS "OSD sync-threshold auto-calibration enabled")
+    add_compile_definitions(OSD_AUTO_SYNC_CAL)
+endif()
+
 # COMP3/COMP4 video-sync detection threshold (mV). Empty = firmware default (162 mV).
 # Sweep per-camera to fix intermittent sync lock, e.g. -DVIDEO_SYNC_THRESHOLD_MV=200
 set(VIDEO_SYNC_THRESHOLD_MV "" CACHE STRING "Video sync detection threshold in mV")

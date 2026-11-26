@@ -133,6 +133,9 @@ int main (void)
         msp_loop_process();
         led_update();
         debug_print_loop();
+#ifdef OSD_AUTO_SYNC_CAL
+        video_sync_cal_step();
+#endif
         logo_timeout_check();
 #ifdef OSD_TUNING_MODE
         video_tuning_step();
@@ -220,6 +223,16 @@ void logo_timeout_check(void)
     if (boot_time == 0) {
         boot_time = HAL_GetTick();
     }
+#ifdef OSD_AUTO_SYNC_CAL
+    // Quiet seek: nothing is shown until the calibration releases the splash; the splash then
+    // runs for LOGO_TIMEOUT_MS counted from that moment.
+    extern bool g_splash_pending;
+    extern uint32_t g_splash_release_tick;
+    if (g_splash_pending) {
+        return;
+    }
+    boot_time = g_splash_release_tick;
+#endif
 
     // Check if LOGO_TIMEOUT_MS has elapsed, clear logo and version string if so
     if (!timeout_checked && (HAL_GetTick() - boot_time) >= LOGO_TIMEOUT_MS) {

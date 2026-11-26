@@ -176,7 +176,7 @@ EXEC_RAM void video_gen_start(void)
         TIM17->ARR=LINE_FREQ_PAL;
         LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_6);
 
-        video_apply_sync_threshold();
+        video_apply_sync_threshold_for(true);
 
         video_gen_enabled = true;
     }
@@ -188,7 +188,7 @@ EXEC_RAM void video_gen_stop(void)
         LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_6);
         LL_TIM_DisableCounter(TIM17);
         LL_TIM_DisableAllOutputs(TIM17);
-        video_apply_sync_threshold();
+        video_apply_sync_threshold_for(false);
         video_gen_enabled = false;
 
     }
