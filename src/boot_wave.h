@@ -26,8 +26,8 @@
 
 #include <stdint.h>
 
-#define BOOT_WAVE_DURATION_MS   4000u   /* 10x for testing -- dial back (e.g. ~400) when done */
-#define BOOT_WAVE_FRAME_MS      16u     /* ~60 fps canvas refresh while the wave runs */
+#define BOOT_WAVE_DURATION_MS   3000u   /* was 4000 (~33% faster); 10x slower than the original ~400 test value */
+#define BOOT_WAVE_FRAME_MS      15u     /* ~66 fps; must divide BOOT_WAVE_DURATION_MS so the last frame is the full sweep */
 
 /* Thickness of the band, in diagonals. Must equal the length of BOOT_WAVE_RAMP. */
 #define BOOT_WAVE_DEPTH         8

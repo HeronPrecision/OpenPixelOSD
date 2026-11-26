@@ -82,7 +82,7 @@ Both startup files now zero-fill it.
 
 ## Open items
 
-1. `BOOT_WAVE_DURATION_MS` in `src/boot_wave.h` is 4000, a "10x for testing" value. The
+1. `BOOT_WAVE_DURATION_MS` in `src/boot_wave.h` is 3000 (15 ms frames), still a slowed-down testing value (was 4000). The
    intended value is about 400. Changing it changes the shipped binary.
 2. `chickadee-vectors` (cut at 3663204): rasterised artificial horizon reconstructed from the
    DisplayPort glyphs, plus a vector boot animation. Research only; see `doc/vector-osd.md`.
