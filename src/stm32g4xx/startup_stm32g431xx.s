@@ -111,6 +111,22 @@ FillZerobss:
 LoopFillZerobss:
   cmp r2, r4
   bcc FillZerobss
+/* Zero fill the CCMRAM bss segment. The linker places .ccmram.bss in a NOLOAD section, so
+ * without this the CCM variables (video_gen_enabled, new_field, msp_uart, ...) keep whatever
+ * the RAM held at power-up (random) or from the previous run (after a warm reset), and their
+ * "= false" / "= {0}" initialisers are never applied. */
+  ldr r2, =_sccmram_bss
+  ldr r4, =_eccmram_bss
+  movs r3, #0
+  b LoopFillZeroCcmBss
+
+FillZeroCcmBss:
+  str  r3, [r2]
+  adds r2, r2, #4
+
+LoopFillZeroCcmBss:
+  cmp r2, r4
+  bcc FillZeroCcmBss
 /* Call static constructors */
     bl __libc_init_array
 /* Call the application's entry point.*/
