@@ -97,3 +97,26 @@ burst troughs (-0.48 V) come within ~50 mV of the tip, so the usable window is ~
 Needed in hardware (input side of the OSD module): AC-couple (≈ 1 µF-10 µF series cap) and a sync-tip
 clamp to a bias (e.g. tip clamped to ~+0.2 V), so any DC reference becomes tip-low, positive.
 That is what the MS1207's front end does. Gain may also be needed (sync only 240 mV here).
+
+### Clamped-input simulation (video-clamp targets), `tools/clampsim.py`
+
+`python3 -I tools/clampsim.py doc/camera-waveforms/2026-11-27-fc-osd-out-bipolar.csv [--fc-mhz 1.6] [--gain 2]`
+shifts the tip to 0.25 V (ideal clamp), applies a single-pole low-pass and sweeps the comparator
+threshold in 5.47 mV steps (MSPM0 COMP DAC). Plateau = thresholds giving exactly one falling edge.
+Re-run it on every new capture, as with `analyze_waveform.py`.
+
+| Filter (gain x1, 10 mV hyst.) | Plateau | Width |
+|---|---|---|
+| none | none usable (the "886..892" it prints is a trace-start artefact) | ~5 mV |
+| 1.6 MHz (1k + 100 pF) | 284..465 mV | 181 mV (34 steps) |
+| 1.0 MHz (1k + 150 pF) | 284..481 mV | 197 mV (37 steps) |
+| 1.6 MHz, gain x2 | 306..667 mV | 361 mV |
+
+Decision (FC1 RC6 / OSD module, `video-clamp` branches): keep 1k + 100 pF, no gain stage. A sharper
+edge keeps line-start timing, and so horizontal text stability, better than 15 mV of extra window.
+The plateau sits at about 280-465 mV, so the centre is near 375 mV. Range edges move 1:1 with the
+real clamped tip level (the tip is taken as the 1st-percentile sample, -0.557 V here).
+
+Caveats: **one line only** (no vsync/serration), and an **ideal clamp** (tip exactly 0.25 V, no
+diode drop, leakage or droop over the line). If the RC4 bodge is built, scope the clamped node and
+record the real tip level and its droop over a line.
