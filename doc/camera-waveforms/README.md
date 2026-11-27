@@ -77,3 +77,23 @@ glitches briefly while the sweep runs, then recovers. The splash shows the picke
 (synthetic test only); re-verify on the original FC1 cameras before shipping to them.
 
 Still open: the camera model for RC4-A (the index row says model not recorded).
+
+## 2026-11-27 — another FC's OSD output (bipolar, 0 V-referenced)
+
+File: `2026-11-27-fc-osd-out-bipolar.csv` (Siglent SDS824X HD, CH1, 20 µs, 0.5 ns/sample; analysis in
+`-analysis.txt`). Probed at another FC's OSD output. Reported: the MS1207 analog-to-USB adapter
+handles it, our RC4 does not.
+
+Levels (one line): sync tip **-0.53 V**, back porch / blanking **-0.29 V**, colour burst swings
+**-0.48..-0.09 V** (centred on blanking), picture/white **~0 V (-0.1..+0.06)**. Sync depth only
+~240 mV, whole signal ~0.55 Vpp and **entirely at or below 0 V**.
+
+Why the RC4 fails: the G431 input (PA7 -> OPAMP PGA -> PA2/COMP3) is DC-coupled and cannot go
+below 0 V; every negative level is clipped, so there is no sync to see. This is not fixable by
+the DAC threshold or the auto-calibration (which sweeps 40..600 mV). Even if level-shifted, the
+burst troughs (-0.48 V) come within ~50 mV of the tip, so the usable window is ~20 mV wide
+(-496..-476 mV raw) and a low-pass/blanking filter on the sync path would be needed too.
+
+Needed in hardware (input side of the OSD module): AC-couple (≈ 1 µF-10 µF series cap) and a sync-tip
+clamp to a bias (e.g. tip clamped to ~+0.2 V), so any DC reference becomes tip-low, positive.
+That is what the MS1207's front end does. Gain may also be needed (sync only 240 mV here).
